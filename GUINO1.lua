@@ -11,17 +11,22 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local ContentProvider = game:GetService("ContentProvider")
 local SoundService = game:GetService("SoundService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ===================== CONFIG =====================
 local HUB_TITLE = "NEXORA HUB"
 local LOGO_ID = "rbxassetid://86383017875768"
 local BG_ID = "rbxassetid://103808357914530"
+local DISCORD_ICON = "rbxassetid://8387379664" -- รูปปุ่ม Discord
+local DISCORD_LINK = "https://discord.gg/vHRMNpDsQ4"
 local BG_DIM = 0.3 -- ความมืดทับภาพพื้นหลัง 0-1
 local MIN_LOAD = 4.5 -- วินาทีขั้นต่ำของหน้าโหลด
-local WIN_W, WIN_H = 560, 320
+local WIN_W, WIN_H = 580, 340
 local WHITE = Color3.new(1, 1, 1)
 local EFFECTS_ON = true
+local lang = "TH"
+local VERSION = "GUINO1 v2"
 
 -- เสียง: {id, ความดัง, ความเร็ว} (ใส่ rbxassetid://ไอดีของคุณแทนได้)
 local SOUND_ON = true
@@ -35,7 +40,25 @@ local SFX = {
 }
 -- ==================================================
 
-local lang = "TH"
+-- ===== โหลดการตั้งค่าที่บันทึกไว้ (ถ้าเครื่องรองรับ readfile) =====
+local SAVE_FILE = "GUINO1_settings.json"
+local function loadSaved()
+	local ok, data = pcall(function()
+		if isfile and readfile and isfile(SAVE_FILE) then
+			return HttpService:JSONDecode(readfile(SAVE_FILE))
+		end
+	end)
+	if ok and type(data) == "table" then return data end
+	return {}
+end
+local SAVED = loadSaved()
+local AUTOSAVE = (SAVED.autosave ~= false)
+if SAVED.sound ~= nil then SOUND_ON = SAVED.sound and true or false end
+if tonumber(SAVED.vol) then MASTER_VOL = math.clamp(tonumber(SAVED.vol), 0, 1) end
+if SAVED.fx ~= nil then EFFECTS_ON = SAVED.fx and true or false end
+if tonumber(SAVED.dim) then BG_DIM = math.clamp(tonumber(SAVED.dim), 0, 0.8) end
+if SAVED.lang == "EN" or SAVED.lang == "TH" then lang = SAVED.lang end
+
 local T = {
 	TH = {s1 = "ตรวจสอบระบบ", s2 = "โหลดทรัพยากร", s3 = "เชื่อมต่อโมดูล", s4 = "พร้อมใช้งาน"},
 	EN = {s1 = "Checking system", s2 = "Loading assets", s3 = "Linking modules", s4 = "Ready"},
@@ -48,6 +71,32 @@ local function pickFont(name, fallback)
 end
 local TITLE_FONT = pickFont("Michroma", Enum.Font.GothamBlack)
 local HUD_FONT = pickFont("Sarpanch", Enum.Font.GothamBold)
+
+-- ===== ธีมสี (ค่าเริ่มต้น = ขาว) =====
+local THEMES = {
+	{"ขาว", "White", Color3.fromRGB(235, 235, 235)},
+	{"แดง", "Red", Color3.fromRGB(226, 52, 72)},
+	{"เขียว", "Green", Color3.fromRGB(28, 190, 120)},
+	{"ฟ้า", "Cyan", Color3.fromRGB(70, 190, 255)},
+	{"ม่วง", "Purple", Color3.fromRGB(165, 110, 255)},
+	{"ทอง", "Gold", Color3.fromRGB(255, 190, 60)},
+}
+local themeIdx = math.clamp(math.floor(tonumber(SAVED.theme) or 1), 1, #THEMES)
+local ACCENT = THEMES[themeIdx][3]
+local accentFns = {}
+local function onAccent(fn)
+	accentFns[#accentFns + 1] = fn
+	fn(ACCENT)
+end
+local function setAccent(i)
+	themeIdx = i
+	ACCENT = THEMES[i][3]
+	for _, f in ipairs(accentFns) do f(ACCENT) end
+end
+-- สีตัวอักษรที่อ่านออกบนพื้นสี accent
+local function onAccentText(c)
+	return (0.299 * c.R + 0.587 * c.G + 0.114 * c.B > 0.6) and Color3.fromRGB(10, 10, 10) or WHITE
+end
 
 -- helpers
 local function new(class, props, parent)
@@ -66,7 +115,7 @@ local function tw(o, t, props, style, dir)
 	return tween
 end
 
--- แสงขาววิ่งรอบขอบ
+-- แสงวิ่งรอบขอบ (สีตามธีม)
 local spinners = {}
 local COMET = NumberSequence.new({
 	NumberSequenceKeypoint.new(0, 0),
@@ -74,9 +123,10 @@ local COMET = NumberSequence.new({
 	NumberSequenceKeypoint.new(1, 0),
 })
 local function glow(parent, thickness, speed)
-	local s = new("UIStroke", {Color = WHITE, Thickness = thickness or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
+	local s = new("UIStroke", {Color = ACCENT, Thickness = thickness or 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, parent)
 	local g = new("UIGradient", {Transparency = COMET}, s)
 	table.insert(spinners, {g = g, speed = speed or 90})
+	onAccent(function(c) s.Color = c end)
 	return s, g
 end
 
@@ -255,23 +305,23 @@ onFrame(function(t)
 	for _, s in ipairs(spinners) do s.g.Rotation = (t * s.speed) % 360 end
 end)
 
--- ===================== หน้าต่าง + แถบบน + แถบข้าง =====================
+-- ===================== หน้าต่าง + หัวเรื่อง + แถบข้าง =====================
 local Win = new("Frame", {Name = "Win", Size = UDim2.fromOffset(WIN_W, WIN_H), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Visible = false}, gui)
 local scale = new("UIScale", {Scale = base}, Win)
 local Main = new("CanvasGroup", {Name = "Main", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(12, 12, 12), BorderSizePixel = 0, GroupTransparency = 1}, Win)
-corner(Main, 14)
+corner(Main, 16)
 local Rim = new("Frame", {Name = "Rim", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 5}, Win)
-corner(Rim, 14)
+corner(Rim, 16)
 glow(Rim, 2.5, 90)
 local Rim2 = new("Frame", {Name = "Rim2", Size = UDim2.new(1, 8, 1, 8), Position = UDim2.fromOffset(-4, -4), BackgroundTransparency = 1, ZIndex = 5}, Win)
-corner(Rim2, 18)
+corner(Rim2, 20)
 glow(Rim2, 1, -150)
 
 new("ImageLabel", {Name = "Background", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = BG_ID, ScaleType = Enum.ScaleType.Crop, ZIndex = 1}, Main)
 local Dim = new("Frame", {Name = "Dim", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1 - BG_DIM, BorderSizePixel = 0, ZIndex = 1}, Main)
 
 -- แสงสแกนไล่ลง + ฝุ่นแสงลอย
-local Scan = new("Frame", {Size = UDim2.new(1, 0, 0, 70), Position = UDim2.fromOffset(0, -70), BackgroundColor3 = WHITE, BackgroundTransparency = 0.85, BorderSizePixel = 0, ZIndex = 2}, Main)
+local Scan = new("Frame", {Size = UDim2.new(1, 0, 0, 70), Position = UDim2.fromOffset(0, -70), BackgroundColor3 = WHITE, BackgroundTransparency = 0.88, BorderSizePixel = 0, ZIndex = 2}, Main)
 new("UIGradient", {Rotation = 90, Transparency = NumberSequence.new({
 	NumberSequenceKeypoint.new(0, 1),
 	NumberSequenceKeypoint.new(0.5, 0),
@@ -295,31 +345,35 @@ onFrame(function(t, dt)
 	end
 end)
 
--- top bar
-local Top = new("Frame", {Name = "Top", Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 30), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 3}, Main)
-corner(Top, 10)
+-- หัวเรื่อง: โลโก้ + ชื่อ + คำรอง (สไตล์ MOBILE INTERFACE)
+local Top = new("Frame", {Name = "Top", Position = UDim2.fromOffset(6, 6), Size = UDim2.new(1, -12, 0, 40), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 3}, Main)
+corner(Top, 12)
 stroke(Top, Color3.fromRGB(120, 120, 120), 0.65, 1)
-local Logo = new("ImageLabel", {Name = "Logo", Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(5, 4), BackgroundTransparency = 1, Image = LOGO_ID, ZIndex = 4}, Top)
-corner(Logo, 6)
-local TitleLbl = new("TextLabel", {Position = UDim2.fromOffset(34, 0), Size = UDim2.new(0, 200, 1, 0), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = TITLE_FONT, TextSize = 11, TextColor3 = WHITE, Text = HUB_TITLE, ZIndex = 4}, Top)
+local Logo = new("ImageLabel", {Name = "Logo", Size = UDim2.fromOffset(30, 30), Position = UDim2.fromOffset(7, 5), BackgroundTransparency = 1, Image = LOGO_ID, ZIndex = 4}, Top)
+corner(Logo, 9)
+local logoStroke = stroke(Logo, ACCENT, 0.1, 1.5)
+onAccent(function(c) logoStroke.Color = c end)
+local TitleLbl = new("TextLabel", {Position = UDim2.fromOffset(46, 4), Size = UDim2.fromOffset(220, 18), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = TITLE_FONT, TextSize = 12, TextColor3 = WHITE, Text = HUB_TITLE, ZIndex = 4}, Top)
 new("UIGradient", {Color = ColorSequence.new(WHITE, Color3.fromRGB(150, 150, 150)), Rotation = 90}, TitleLbl)
 new("UIStroke", {Color = WHITE, Thickness = 1, Transparency = 0.85}, TitleLbl)
+local SubLbl = new("TextLabel", {Position = UDim2.fromOffset(46, 22), Size = UDim2.fromOffset(220, 14), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = HUD_FONT, TextSize = 11, TextColor3 = ACCENT, Text = "MOBILE INTERFACE", ZIndex = 4}, Top)
+onAccent(function(c) SubLbl.TextColor3 = c end)
 
--- ปุ่มแบนเรียบ ไม่มีสี กดแล้วมีประกาย + เสียงนุ่ม
+-- ปุ่มแบนเรียบ กดแล้วมีประกาย + เสียงนุ่ม
 local function topBtn(txt, w, off)
-	local b = new("TextButton", {Size = UDim2.fromOffset(w, 22), Position = UDim2.new(1, -(off + w), 0.5, -11), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Text = txt, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WHITE, RichText = true, AutoButtonColor = false, ZIndex = 4}, Top)
-	corner(b, 5)
+	local b = new("TextButton", {Size = UDim2.fromOffset(w, 26), Position = UDim2.new(1, -(off + w), 0.5, -13), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Text = txt, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE, RichText = true, AutoButtonColor = false, ZIndex = 4}, Top)
+	corner(b, 8)
 	stroke(b, Color3.fromRGB(110, 110, 110), 0.35, 1)
 	fx(b, Color3.fromRGB(58, 58, 58))
 	b.MouseButton1Click:Connect(function()
-		burst(b, w / 2, 11, 7, 18, 30)
+		burst(b, w / 2, 13, 7, 18, 30)
 		sfx("click", nil, 1.7 + math.random() * 0.5)
 	end)
 	return b
 end
-local BtnClose = topBtn("×", 22, 8)
-local BtnMin = topBtn("-", 22, 34)
-local BtnSize = topBtn("□", 22, 60)
+local BtnClose = topBtn("×", 26, 8)
+local BtnMin = topBtn("-", 26, 38)
+local BtnSize = topBtn("□", 26, 68)
 
 -- ปุ่มภาษา แสดงเป็น TH/EN (ภาษาที่ใช้อยู่เป็นตัวขาว)
 local function langText()
@@ -328,19 +382,20 @@ local function langText()
 	end
 	return '<font color="rgb(120,120,120)">TH/</font><font color="rgb(255,255,255)">EN</font>'
 end
-local BtnLang = topBtn("", 52, 86)
+local BtnLang = topBtn("", 54, 98)
 BtnLang.Font = TITLE_FONT
 BtnLang.TextSize = 9
 BtnLang.Text = langText()
 makeDrag(Top, Win)
 
--- แถบข้าง (เมนูหมวดหมู่ เห็นชื่อชัด)
-local Side = new("Frame", {Name = "Side", Position = UDim2.fromOffset(6, 42), Size = UDim2.new(0, 104, 1, -48), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 3}, Main)
-corner(Side, 10)
+-- แถบข้าง (โปรไฟล์ + เมนูใหญ่ สไตล์ในภาพ)
+local SIDE_W = 170
+local Side = new("Frame", {Name = "Side", Position = UDim2.fromOffset(6, 52), Size = UDim2.new(0, SIDE_W, 1, -58), BackgroundColor3 = Color3.fromRGB(10, 10, 10), BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 3}, Main)
+corner(Side, 14)
 stroke(Side, Color3.fromRGB(120, 120, 120), 0.65, 1)
 
--- ===================== ตรรกะหน้าต่าง + เมนูหมวด + โลโก้ลอย =====================
-local Content = new("Frame", {Name = "Content", Position = UDim2.fromOffset(118, 42), Size = UDim2.new(1, -124, 1, -48), BackgroundTransparency = 1, ZIndex = 3}, Main)
+-- ===================== ตรรกะหน้าต่าง + แถบข้าง + โลโก้ลอย =====================
+local Content = new("Frame", {Name = "Content", Position = UDim2.fromOffset(6 + SIDE_W + 6, 52), Size = UDim2.new(1, -(6 + SIDE_W + 12), 1, -58), BackgroundTransparency = 1, ZIndex = 3}, Main)
 
 -- ภาษา: ข้อความสองภาษาที่สลับได้
 local langRegs = {}
@@ -370,7 +425,7 @@ local function mkLabel(parent, x, y, w, h, text, size, color, font, align)
 end
 local function mkCard(parent, h, order)
 	local f = new("Frame", {Size = UDim2.new(1, 0, 0, h), BackgroundColor3 = Color3.fromRGB(14, 14, 14), BackgroundTransparency = 0.25, BorderSizePixel = 0, LayoutOrder = order, ZIndex = 4}, parent)
-	corner(f, 10)
+	corner(f, 12)
 	stroke(f, Color3.fromRGB(120, 120, 120), 0.6, 1)
 	return f
 end
@@ -384,8 +439,8 @@ local function fxFlat(btn, hoverColor)
 end
 
 -- ป้ายแจ้งเตือนเล็กๆ ด้านล่างหน้าต่าง
-local Toast = new("TextLabel", {AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 24), Size = UDim2.fromOffset(260, 24), BackgroundColor3 = Color3.fromRGB(235, 235, 235), BackgroundTransparency = 0.05, TextColor3 = Color3.fromRGB(10, 10, 10), Font = HUD_FONT, TextSize = 13, Text = "", ZIndex = 40}, Main)
-corner(Toast, 12)
+local Toast = new("TextLabel", {AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 28), Size = UDim2.fromOffset(280, 26), BackgroundColor3 = Color3.fromRGB(235, 235, 235), BackgroundTransparency = 0.05, TextColor3 = Color3.fromRGB(10, 10, 10), Font = HUD_FONT, TextSize = 13, Text = "", ZIndex = 40}, Main)
+corner(Toast, 13)
 local toastId = 0
 local function toast(th, en)
 	toastId = toastId + 1
@@ -393,7 +448,7 @@ local function toast(th, en)
 	Toast.Text = (lang == "TH") and th or (en or th)
 	tw(Toast, 0.2, {Position = UDim2.new(0.5, 0, 1, -10)}, Enum.EasingStyle.Back)
 	task.delay(1.8, function()
-		if id == toastId then tw(Toast, 0.2, {Position = UDim2.new(0.5, 0, 1, 24)}) end
+		if id == toastId then tw(Toast, 0.2, {Position = UDim2.new(0.5, 0, 1, 28)}) end
 	end)
 end
 local function copyToast(s, th, en)
@@ -403,6 +458,27 @@ local function copyToast(s, th, en)
 		toast("เครื่องนี้ไม่รองรับการคัดลอก", "Copy not supported here")
 	end
 end
+
+-- ค่าที่บันทึกได้ + ฟังก์ชันบันทึก
+local userScale = tonumber(SAVED.scale) and math.clamp(tonumber(SAVED.scale), 0.7, 1.4) or 1
+local uiOpacity = tonumber(SAVED.opacity) and math.clamp(tonumber(SAVED.opacity), 0.5, 1) or 1
+local saveQueued = false
+local function saveSettings(force)
+	if (not AUTOSAVE and not force) or not writefile or saveQueued then return end
+	saveQueued = true
+	task.delay(0.6, function()
+		saveQueued = false
+		pcall(function()
+			writefile(SAVE_FILE, HttpService:JSONEncode({
+				sound = SOUND_ON, vol = MASTER_VOL, fx = EFFECTS_ON, dim = BG_DIM,
+				scale = userScale, opacity = uiOpacity, theme = themeIdx, lang = lang, autosave = AUTOSAVE,
+			}))
+		end)
+	end)
+end
+
+-- ฟังก์ชันเซิร์ฟเวอร์ (เติมไว้ในหมวดตั้งค่า ใช้ร่วมกับหน้าหลัก)
+local SRV = {}
 
 -- สายฟ้ารอบหน้าต่าง
 local function strikeWin(big)
@@ -417,7 +493,6 @@ end
 
 -- เปิด/ปิดหน้าต่าง (มีเสียงนุ่ม)
 local isBig = false
-local userScale = 1
 local opened = false
 local function target() return base * userScale * (isBig and 1.2 or 1) end
 local function openWin()
@@ -426,10 +501,10 @@ local function openWin()
 	Win.Visible = true
 	scale.Scale = target() * 0.8
 	tw(scale, 0.3, {Scale = target()}, Enum.EasingStyle.Back)
-	tw(Main, 0.22, {GroupTransparency = 0})
+	tw(Main, 0.22, {GroupTransparency = 1 - uiOpacity})
 	if EFFECTS_ON then
 		flashFrame(Main, 30, 0.55, 0.45)
-		shock(Win, WIN_W / 2, WIN_H / 2, 700, 0.7, 25)
+		shock(Win, WIN_W / 2, WIN_H / 2, 760, 0.7, 25)
 		for _ = 1, 6 do strikeWin(true) end
 	end
 	sfx("whoosh", 0.45, 1.5)
@@ -460,54 +535,160 @@ end
 makePage("home")
 makePage("settings")
 
+-- ไอคอนวาดจากกรอบ (เห็นชัวร์ ไม่พึ่งฟอนต์/อิโมจิ): บ้าน + เฟือง
+local function makeIcon(kind, parent, x, y)
+	local box = new("Frame", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(22, 22), BackgroundTransparency = 1, ZIndex = 6}, parent)
+	local parts = {}
+	local function part(px, py, w, h, r, rot, keep)
+		local f = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(px, py), Size = UDim2.fromOffset(w, h), Rotation = rot or 0, BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 6}, box)
+		if r and r > 0 then corner(f, r) end
+		if not keep then parts[#parts + 1] = f end
+		return f
+	end
+	local hole
+	if kind == "home" then
+		part(11, 9, 13, 13, 2, 45)
+		part(11, 15, 14, 10, 2, 0)
+		hole = part(11, 17, 4, 6, 1, 0, true)
+	else
+		part(11, 11, 19, 4, 1, 0)
+		part(11, 11, 19, 4, 1, 90)
+		part(11, 11, 19, 4, 1, 45)
+		part(11, 11, 19, 4, 1, -45)
+		part(11, 11, 14, 14, 7, 0)
+		hole = part(11, 11, 6, 6, 3, 0, true)
+	end
+	return {
+		setColor = function(c) for _, f in ipairs(parts) do f.BackgroundColor3 = c end end,
+		setHole = function(c) hole.BackgroundColor3 = c end,
+	}
+end
+
+-- สไตล์ปุ่มเมนู: ปุ่มที่เลือก = พื้นสี accent + แถบขาวด้านซ้าย (เหมือนในภาพ)
+local NAV_IDLE = Color3.fromRGB(30, 30, 30)
+local function styleNav()
+	for n, nb in pairs(NavBtns) do
+		local on = (n == currentTab)
+		local fg = on and onAccentText(ACCENT) or GRAY
+		tw(nb.b, 0.18, {BackgroundColor3 = on and ACCENT or NAV_IDLE, BackgroundTransparency = on and 0 or 0.2})
+		tw(nb.ind, 0.18, {BackgroundTransparency = on and 0 or 1})
+		nb.ind.BackgroundColor3 = onAccentText(ACCENT)
+		tw(nb.lb, 0.18, {TextColor3 = fg})
+		nb.ic.setColor(fg)
+		nb.ic.setHole(on and ACCENT or NAV_IDLE)
+	end
+end
+onAccent(styleNav)
+
 local function selectTab(name, silent)
 	if currentTab == name then return end
 	currentTab = name
 	for n, p in pairs(Pages) do p.Visible = (n == name) end
-	for n, nb in pairs(NavBtns) do
-		local on = (n == name)
-		tw(nb.b, 0.15, {BackgroundTransparency = on and 0.85 or 1})
-		tw(nb.ind, 0.15, {BackgroundTransparency = on and 0 or 1})
-		tw(nb.ic, 0.15, {TextColor3 = on and WHITE or GRAY})
-		tw(nb.lb, 0.15, {TextColor3 = on and WHITE or GRAY})
-	end
+	styleNav()
 	local pg = Pages[name]
 	pg.Position = UDim2.fromOffset(0, 10)
 	tw(pg, 0.2, {Position = UDim2.fromOffset(0, 0)})
 	if not silent then sfx("click", nil, 1.5) end
 end
 
--- ปุ่มเมนู: ไอคอนอักษร + ชื่อหมวดหมู่ที่เห็นชัด
-local function navBtn(icon, th, en, name, atBottom)
-	local b = new("TextButton", {AnchorPoint = Vector2.new(0.5, atBottom and 1 or 0), Position = UDim2.new(0.5, 0, atBottom and 1 or 0, atBottom and -6 or 6), Size = UDim2.new(1, -12, 0, 38), BackgroundColor3 = WHITE, BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 4}, Side)
-	corner(b, 8)
-	local ind = new("Frame", {Size = UDim2.fromOffset(3, 18), Position = UDim2.new(0, 2, 0.5, -9), BackgroundColor3 = WHITE, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 5}, b)
+local function navBtn(kind, th, en, name, atBottom)
+	local b = new("TextButton", {AnchorPoint = Vector2.new(0, atBottom and 1 or 0), Position = UDim2.new(0, 8, atBottom and 1 or 0, atBottom and -8 or 100), Size = UDim2.new(1, -16, 0, 46), BackgroundColor3 = NAV_IDLE, BackgroundTransparency = 0.2, Text = "", AutoButtonColor = false, ZIndex = 4}, Side)
+	corner(b, 12)
+	stroke(b, Color3.fromRGB(120, 120, 120), 0.7, 1)
+	local ind = new("Frame", {Size = UDim2.fromOffset(3, 20), Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = WHITE, BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 6}, b)
 	corner(ind, 2)
-	local ic = new("TextLabel", {Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(24, 38), BackgroundTransparency = 1, Text = icon, Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = GRAY, ZIndex = 5}, b)
-	local lb = new("TextLabel", {Position = UDim2.fromOffset(36, 0), Size = UDim2.new(1, -40, 1, 0), BackgroundTransparency = 1, Font = HUD_FONT, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = GRAY, ZIndex = 5}, b)
+	local ic = makeIcon(kind, b, 16, 12)
+	local lb = new("TextLabel", {Position = UDim2.fromOffset(48, 0), Size = UDim2.new(1, -52, 1, 0), BackgroundTransparency = 1, Font = HUD_FONT, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = GRAY, ZIndex = 6}, b)
 	tr(lb, th, en)
 	NavBtns[name] = {b = b, ind = ind, ic = ic, lb = lb}
 	b.MouseButton1Click:Connect(function() selectTab(name) end)
 end
-navBtn("\u{2302}", "หน้าหลัก", "HOME", "home", false)
-navBtn("\u{2699}\u{FE0E}", "ตั้งค่า", "SETTINGS", "settings", true)
+
+-- การ์ดโปรไฟล์ในแถบข้าง: รูป + ชื่อ + เลือด (เหมือนในภาพ)
+local PC = new("Frame", {Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -16, 0, 84), BackgroundColor3 = Color3.fromRGB(26, 26, 26), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 4}, Side)
+corner(PC, 12)
+stroke(PC, Color3.fromRGB(120, 120, 120), 0.7, 1)
+local avRing = new("Frame", {Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(40, 40), BackgroundTransparency = 1, ZIndex = 5}, PC)
+corner(avRing, 20)
+local avStroke = stroke(avRing, ACCENT, 0, 2)
+onAccent(function(c) avStroke.Color = c end)
+local avImg = new("ImageLabel", {Position = UDim2.fromOffset(11, 11), Size = UDim2.fromOffset(34, 34), BackgroundColor3 = Color3.fromRGB(30, 30, 30), Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150", ZIndex = 6}, PC)
+corner(avImg, 17)
+mkLabel(PC, 54, 9, 92, 16, LocalPlayer.DisplayName, 12)
+mkLabel(PC, 54, 26, 92, 14, "@" .. LocalPlayer.Name, 10, GRAY, HUD_FONT)
+local hpText = mkLabel(PC, 8, 52, 138, 14, "", 11, WHITE, HUD_FONT)
+local hpTrack = new("Frame", {Position = UDim2.fromOffset(8, 68), Size = UDim2.new(1, -16, 0, 8), BackgroundColor3 = Color3.fromRGB(50, 50, 50), BorderSizePixel = 0, ZIndex = 5}, PC)
+corner(hpTrack, 4)
+local hpFill = new("Frame", {Size = UDim2.fromScale(1, 1), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 6}, hpTrack)
+corner(hpFill, 4)
+onAccent(function(c) hpFill.BackgroundColor3 = c end)
+
+navBtn("home", "หน้าหลัก", "HOME", "home", false)
+navBtn("gear", "ตั้งค่า", "SETTINGS", "settings", true)
 selectTab("home", true)
 
--- มินิสถานะในแถบข้าง (FPS / ปิง / เลือด)
-local Mini = new("Frame", {AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -52), Size = UDim2.new(1, -16, 0, 56), BackgroundTransparency = 1, ZIndex = 4}, Side)
-new("Frame", {Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = WHITE, BackgroundTransparency = 0.8, BorderSizePixel = 0, ZIndex = 4}, Mini)
+-- มินิสถานะในแถบข้าง: FPS / ปิง / หน่วยความจำ พร้อมแถบ
+local MC = new("Frame", {Position = UDim2.fromOffset(8, 154), Size = UDim2.new(1, -16, 0, 66), BackgroundColor3 = Color3.fromRGB(26, 26, 26), BackgroundTransparency = 0.25, BorderSizePixel = 0, ZIndex = 4}, Side)
+corner(MC, 12)
+stroke(MC, Color3.fromRGB(120, 120, 120), 0.7, 1)
 local MiniV = {}
-for i, key in ipairs({"fps", "ping", "hp"}) do
-	local y = 4 + (i - 1) * 17
-	mkLabel(Mini, 2, y, 36, 16, string.upper(key), 10, GRAY, HUD_FONT)
-	MiniV[key] = mkLabel(Mini, 36, y, 48, 16, "-", 11, WHITE, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
+for i, key in ipairs({"fps", "ping", "mem"}) do
+	local y = 5 + (i - 1) * 20
+	mkLabel(MC, 10, y, 50, 14, string.upper(key), 10, GRAY, HUD_FONT)
+	local v = mkLabel(MC, 0, y, 144, 14, "-", 11, WHITE, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
+	local tk = new("Frame", {Position = UDim2.fromOffset(10, y + 15), Size = UDim2.fromOffset(134, 2), BackgroundColor3 = Color3.fromRGB(55, 55, 55), BorderSizePixel = 0, ZIndex = 5}, MC)
+	local fl = new("Frame", {Size = UDim2.fromScale(0, 1), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 6}, tk)
+	onAccent(function(c) fl.BackgroundColor3 = c end)
+	MiniV[key] = {val = v, bar = fl}
 end
+
+-- ตัวสุ่มค่าสถานะกลาง (ทุก 0.25 วินาที ทำงานเฉพาะตอนเปิดหน้าต่าง)
+local Stats = game:GetService("Stats")
+local sampleCbs = {}
+local function onSample(cb) sampleCbs[#sampleCbs + 1] = cb end
+local S = {fps = 60, ping = 0, mem = 0}
+do
+	local acc, frames = 0, 0
+	onFrame(function(t, dt)
+		acc = acc + dt
+		frames = frames + 1
+		if acc < 0.25 then return end
+		S.fps = frames / acc
+		acc, frames = 0, 0
+		if not opened then return end
+		S.ping, S.mem = 0, 0
+		pcall(function() S.ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+		pcall(function() S.mem = Stats:GetTotalMemoryUsageMb() end)
+		for _, cb in ipairs(sampleCbs) do cb(S, t) end
+	end)
+end
+-- เลือด + มินิสถานะ
+onSample(function(s, t)
+	local ch = LocalPlayer.Character
+	local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+	if hum then
+		local mx = math.max(hum.MaxHealth, 1)
+		local ratio = math.clamp(hum.Health / mx, 0, 1)
+		hpText.Text = ((lang == "TH") and "เลือด " or "HP ") .. math.floor(hum.Health + 0.5) .. " / " .. math.floor(mx + 0.5)
+		tw(hpFill, 0.2, {Size = UDim2.fromScale(ratio, 1)})
+		hpFill.BackgroundTransparency = (ratio < 0.3 and math.floor(t * 4) % 2 == 0) and 0.55 or 0
+	else
+		hpText.Text = ((lang == "TH") and "เลือด " or "HP ") .. "- / -"
+	end
+	MiniV.fps.val.Text = tostring(math.floor(s.fps + 0.5))
+	MiniV.fps.bar.Size = UDim2.fromScale(math.clamp(s.fps / 60, 0, 1), 1)
+	MiniV.ping.val.Text = math.floor(s.ping) .. " ms"
+	MiniV.ping.bar.Size = UDim2.fromScale(math.clamp(1 - s.ping / 300, 0, 1), 1)
+	MiniV.mem.val.Text = math.floor(s.mem) .. " MB"
+	MiniV.mem.bar.Size = UDim2.fromScale(math.clamp(s.mem / 3000, 0, 1), 1)
+end)
 
 -- ปุ่มบนแถบ
 BtnLang.MouseButton1Click:Connect(function()
 	lang = (lang == "TH") and "EN" or "TH"
 	BtnLang.Text = langText()
 	applyLang()
+	saveSettings()
 	sfxSeq("note", {1.6, 2.1}, 0.06, 0.4)
 end)
 BtnSize.MouseButton1Click:Connect(function()
@@ -930,18 +1111,23 @@ stopLoop = onFrame(function(_, dt)
 	end
 end)
 
--- ===================== หมวดหน้าหลัก (ดีไซน์ใหม่) =====================
+-- ===================== หมวดหน้าหลัก =====================
 do
 	local P = Pages.home
-	local Stats = game:GetService("Stats")
 	local MarketplaceService = game:GetService("MarketplaceService")
-	local CW = 428 -- ความกว้างการ์ด
+	local CW = 384 -- ความกว้างการ์ด
 	local FONT = Enum.Font.GothamBold
-	local DISCORD_LINK = "https://discord.gg/vHRMNpDsQ4"
-	local GN = 32 -- จำนวนจุดบนกราฟ
+	local GN = 28 -- จำนวนจุดบนกราฟ
 
 	local function gradText(lbl)
 		new("UIGradient", {Color = ColorSequence.new(WHITE, Color3.fromRGB(150, 150, 150)), Rotation = 90}, lbl)
+	end
+	-- หัวข้อการ์ด: แท่งสี accent + ชื่อ
+	local function heading(card, th, en)
+		local bar = new("Frame", {Position = UDim2.fromOffset(12, 9), Size = UDim2.fromOffset(3, 12), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 6}, card)
+		corner(bar, 2)
+		onAccent(function(c) bar.BackgroundColor3 = c end)
+		tr(mkLabel(card, 20, 8, 250, 14, "", 10, WHITE, TITLE_FONT), th, en)
 	end
 	-- มุมกรอบสไตล์ HUD
 	local function brackets(card)
@@ -949,17 +1135,18 @@ do
 			local ax, ay = c[1], c[2]
 			local h = new("Frame", {AnchorPoint = Vector2.new(ax, ay), Position = UDim2.new(ax, ax == 0 and 3 or -3, ay, ay == 0 and 3 or -3), Size = UDim2.fromOffset(9, 9), BackgroundTransparency = 1, ZIndex = 7}, card)
 			for _, sz in ipairs({UDim2.new(1, 0, 0, 1), UDim2.new(0, 1, 1, 0)}) do
-				new("Frame", {AnchorPoint = Vector2.new(ax, ay), Position = UDim2.fromScale(ax, ay), Size = sz, BackgroundColor3 = WHITE, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 7}, h)
+				local ln = new("Frame", {AnchorPoint = Vector2.new(ax, ay), Position = UDim2.fromScale(ax, ay), Size = sz, BackgroundColor3 = ACCENT, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 7}, h)
+				onAccent(function(col) ln.BackgroundColor3 = col end)
 			end
 		end
 	end
 	-- ช่องข้อมูลเล็ก (ป้ายเล็ก + ค่า)
 	local function chip(parent, x, y, w, h, th, en, vs)
 		local c = new("Frame", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 6}, parent)
-		corner(c, 6)
+		corner(c, 8)
 		stroke(c, Color3.fromRGB(120, 120, 120), 0.65, 1)
-		tr(mkLabel(c, 6, 2, w - 12, 11, "", 9, GRAY, HUD_FONT), th, en)
-		local v = mkLabel(c, 6, 12, w - 12, h - 13, "-", vs or 12, WHITE, FONT)
+		tr(mkLabel(c, 7, 2, w - 14, 11, "", 9, GRAY, HUD_FONT), th, en)
+		local v = mkLabel(c, 7, 12, w - 14, h - 13, "-", vs or 12, WHITE, FONT)
 		return v, c
 	end
 	local function tapCopy(parent, text, th, en)
@@ -969,35 +1156,51 @@ do
 			copyToast(text, th, en)
 		end)
 	end
+	-- ปุ่มสั้นในการ์ด
+	local function qbtn(parent, x, y, w, h, th, en, cb)
+		local b = new("TextButton", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Font = FONT, TextSize = 11, TextColor3 = WHITE, AutoButtonColor = false, ZIndex = 6}, parent)
+		corner(b, 8)
+		stroke(b, Color3.fromRGB(110, 110, 110), 0.4, 1)
+		fxFlat(b, Color3.fromRGB(58, 58, 58))
+		tr(b, th, en)
+		b.MouseButton1Click:Connect(function()
+			sfx("click", nil, 1.6)
+			cb()
+		end)
+		return b
+	end
 
 	-- ===== 1) ตัวละคร =====
-	local c1 = mkCard(P, 88, 1)
+	local c1 = mkCard(P, 96, 1)
 	brackets(c1)
-	local ringF = new("Frame", {Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(72, 72), BackgroundTransparency = 1, ZIndex = 5}, c1)
+	local ringF = new("Frame", {Position = UDim2.fromOffset(8, 12), Size = UDim2.fromOffset(72, 72), BackgroundTransparency = 1, ZIndex = 5}, c1)
 	corner(ringF, 20)
 	glow(ringF, 2, 110)
-	local pic = new("ImageLabel", {Position = UDim2.fromOffset(13, 13), Size = UDim2.fromOffset(62, 62), BackgroundColor3 = Color3.fromRGB(30, 30, 30), Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150", ZIndex = 6}, c1)
+	local pic = new("ImageLabel", {Position = UDim2.fromOffset(13, 17), Size = UDim2.fromOffset(62, 62), BackgroundColor3 = Color3.fromRGB(30, 30, 30), Image = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150", ZIndex = 6}, c1)
 	corner(pic, 16)
-	local nm = mkLabel(c1, 92, 10, 250, 22, LocalPlayer.DisplayName, 17, WHITE, Enum.Font.GothamBlack)
+	local nm = mkLabel(c1, 90, 12, 230, 22, LocalPlayer.DisplayName, 17, WHITE, Enum.Font.GothamBlack)
 	gradText(nm)
-	mkLabel(c1, 92, 33, 250, 14, "@" .. LocalPlayer.Name, 12, GRAY, HUD_FONT)
-	local idV, idC = chip(c1, 92, 52, 150, 28, "ไอดี • แตะเพื่อคัดลอก", "USER ID • TAP TO COPY", 12)
+	mkLabel(c1, 90, 34, 230, 14, "@" .. LocalPlayer.Name, 12, GRAY, HUD_FONT)
+	local idV, idC = chip(c1, 90, 56, 92, 30, "ไอดี • แตะคัดลอก", "ID • TAP COPY", 11)
 	idV.Text = tostring(LocalPlayer.UserId)
 	tapCopy(idC, tostring(LocalPlayer.UserId), "คัดลอก ID แล้ว", "ID copied")
-	local ageV = chip(c1, 248, 52, 110, 28, "อายุบัญชี", "ACCOUNT AGE", 12)
+	local ageV = chip(c1, 188, 56, 86, 30, "อายุบัญชี", "ACCOUNT AGE", 11)
 	ageV.Text = LocalPlayer.AccountAge .. " d"
-	local live = new("Frame", {AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), Size = UDim2.fromOffset(8, 8), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 7}, c1)
+	local clockV = chip(c1, 280, 56, 92, 30, "เวลาเครื่อง", "LOCAL TIME", 11)
+	local live = new("Frame", {AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), Size = UDim2.fromOffset(8, 8), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 7}, c1)
 	corner(live, 4)
-	tr(mkLabel(c1, 280, 11, 120, 14, "", 10, GRAY, HUD_FONT, Enum.TextXAlignment.Right), "ออนไลน์", "ONLINE")
+	onAccent(function(c) live.BackgroundColor3 = c end)
+	tr(mkLabel(c1, 250, 11, 110, 14, "", 10, GRAY, HUD_FONT, Enum.TextXAlignment.Right), "ออนไลน์", "ONLINE")
 
 	-- ===== 2) แมพ =====
-	local c2 = mkCard(P, 100, 2)
+	local c2 = mkCard(P, 108, 2)
 	brackets(c2)
 	local mapBg = new("ImageLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ImageTransparency = 0.82, ScaleType = Enum.ScaleType.Crop, ZIndex = 4}, c2)
-	corner(mapBg, 10)
-	local mapImg = new("ImageLabel", {Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(80, 80), BackgroundColor3 = Color3.fromRGB(30, 30, 30), ZIndex = 6}, c2)
-	corner(mapImg, 12)
-	stroke(mapImg, WHITE, 0.4, 1.5)
+	corner(mapBg, 12)
+	local mapImg = new("ImageLabel", {Position = UDim2.fromOffset(10, 14), Size = UDim2.fromOffset(80, 80), BackgroundColor3 = Color3.fromRGB(30, 30, 30), ZIndex = 6}, c2)
+	corner(mapImg, 14)
+	local mapStroke = stroke(mapImg, ACCENT, 0.2, 1.5)
+	onAccent(function(c) mapStroke.Color = c end)
 	task.spawn(function()
 		local cands = {
 			"rbxthumb://type=GameIcon&id=" .. game.PlaceId .. "&w=150&h=150",
@@ -1011,60 +1214,83 @@ do
 		end
 		mapBg.Image = mapImg.Image
 	end)
-	local mapName = mkLabel(c2, 102, 10, 310, 20, (game.Name ~= "" and game.Name) or "Place", 15, WHITE, Enum.Font.GothamBlack)
+	local mapName = mkLabel(c2, 100, 10, 270, 20, (game.Name ~= "" and game.Name) or "Place", 15, WHITE, Enum.Font.GothamBlack)
 	gradText(mapName)
 	task.spawn(function()
 		local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
 		if ok and info and info.Name then mapName.Text = info.Name end
 	end)
-	local pV, pC = chip(c2, 102, 38, 150, 26, "ไอดีแมพ (Place ID)", "PLACE ID", 11)
+	local pV, pC = chip(c2, 100, 36, 132, 30, "ไอดีแมพ • Place ID", "PLACE ID", 11)
 	pV.Text = tostring(game.PlaceId)
 	tapCopy(pC, tostring(game.PlaceId), "คัดลอก Place ID แล้ว", "Place ID copied")
-	local uV, uC = chip(c2, 258, 38, 150, 26, "Universe ID", "UNIVERSE ID", 11)
+	local uV, uC = chip(c2, 238, 36, 132, 30, "Universe ID", "UNIVERSE ID", 11)
 	uV.Text = tostring(game.GameId)
 	tapCopy(uC, tostring(game.GameId), "คัดลอก Universe ID แล้ว", "Universe ID copied")
-	local jV, jC = chip(c2, 102, 68, 150, 26, "Job ID", "JOB ID", 11)
-	jV.Text = (game.JobId ~= "" and string.sub(game.JobId, 1, 16) .. "..") or "-"
+	local jV, jC = chip(c2, 100, 70, 132, 30, "Job ID", "JOB ID", 11)
+	jV.Text = (game.JobId ~= "" and string.sub(game.JobId, 1, 14) .. "..") or "-"
 	tapCopy(jC, game.JobId, "คัดลอก Job ID แล้ว", "Job ID copied")
-	local plV = chip(c2, 258, 68, 150, 26, "ผู้เล่นในแมพ", "PLAYERS", 11)
+	local plV = chip(c2, 238, 70, 132, 30, "ผู้เล่นในแมพ", "PLAYERS", 11)
 
-	-- ===== 3) ปุ่มคัดลอกลิงก์ Discord =====
-	local dc = new("TextButton", {Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Text = "", AutoButtonColor = false, LayoutOrder = 3, ZIndex = 4}, P)
-	corner(dc, 10)
-	stroke(dc, WHITE, 0.55, 1)
+	-- ===== 3) Discord (ใช้รูปไอคอนที่กำหนด) =====
+	local dc = new("TextButton", {Size = UDim2.new(1, 0, 0, 58), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Text = "", AutoButtonColor = false, LayoutOrder = 3, ZIndex = 4}, P)
+	corner(dc, 12)
+	local dcStroke = stroke(dc, ACCENT, 0.5, 1)
+	onAccent(function(c) dcStroke.Color = c end)
 	fxFlat(dc, Color3.fromRGB(58, 58, 58))
-	local dcTitle = mkLabel(dc, 14, 0, 200, 38, "", 13)
-	dcTitle.TextYAlignment = Enum.TextYAlignment.Center
-	tr(dcTitle, "คัดลอกลิงก์ Discord", "COPY DISCORD LINK")
-	local dcLink = mkLabel(dc, 0, 0, 414, 38, DISCORD_LINK, 10, GRAY, HUD_FONT, Enum.TextXAlignment.Right)
-	dcLink.TextYAlignment = Enum.TextYAlignment.Center
+	local dcIcon = new("ImageLabel", {Position = UDim2.fromOffset(10, 9), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = Color3.fromRGB(20, 20, 20), Image = DISCORD_ICON, ScaleType = Enum.ScaleType.Fit, ZIndex = 6}, dc)
+	corner(dcIcon, 10)
+	mkLabel(dc, 60, 8, 200, 18, "Discord", 15, WHITE, Enum.Font.GothamBlack)
+	tr(mkLabel(dc, 60, 26, 220, 13, "", 10, GRAY, HUD_FONT), "แตะเพื่อคัดลอกลิงก์เข้าร่วม", "TAP TO COPY THE INVITE LINK")
+	mkLabel(dc, 60, 39, 220, 13, DISCORD_LINK, 10, WHITE, HUD_FONT)
+	local pill = new("Frame", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(56, 26), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 6}, dc)
+	corner(pill, 13)
+	local pillTxt = new("TextLabel", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Font = FONT, TextSize = 11, TextColor3 = onAccentText(ACCENT), Text = "COPY", ZIndex = 7}, pill)
+	onAccent(function(c)
+		pill.BackgroundColor3 = c
+		pillTxt.TextColor3 = onAccentText(c)
+	end)
 	dc.MouseButton1Click:Connect(function()
-		burst(dc, 60, 19, 8, 26, 10)
+		burst(dc, 300, 29, 8, 26, 10)
 		sfx("click", nil, 1.7)
 		copyToast(DISCORD_LINK, "คัดลอกลิงก์ Discord แล้ว", "Discord link copied")
 	end)
 
-	-- ===== 4) เลือด (แถบแบ่งช่อง สไตล์ HUD) =====
-	local hc = mkCard(P, 74, 4)
-	brackets(hc)
-	tr(mkLabel(hc, 12, 8, 160, 14, "", 10, WHITE, TITLE_FONT), "// เลือด", "// HEALTH")
-	local hBig = mkLabel(hc, 0, 5, 416, 22, "- / -", 17, WHITE, TITLE_FONT, Enum.TextXAlignment.Right)
-	gradText(hBig)
-	local SEG = 25
-	local segW = (CW - 24 - 2 * (SEG - 1)) / SEG
-	local segs = {}
-	for i = 1, SEG do
-		local s = new("Frame", {Position = UDim2.fromOffset(12 + (i - 1) * (segW + 2), 32), Size = UDim2.fromOffset(segW, 20), BackgroundColor3 = WHITE, BackgroundTransparency = 0.82, BorderSizePixel = 0, ZIndex = 6}, hc)
-		corner(s, 3)
-		segs[i] = s
+	-- ===== 4) คำสั่งด่วน =====
+	local qa = mkCard(P, 112, 4)
+	brackets(qa)
+	heading(qa, "// คำสั่งด่วน", "// QUICK ACTIONS")
+	local bw3 = (CW - 20 - 12) / 3
+	local function qpos(col, row) return 10 + col * (bw3 + 6), 30 + row * 38 end
+	local function addQ(col, row, th, en, cb)
+		local x, y = qpos(col, row)
+		qbtn(qa, x, y, bw3, 32, th, en, cb)
 	end
-	local hState = mkLabel(hc, 12, 55, 300, 14, "", 10, GRAY, HUD_FONT)
-	local hStateE = tr(hState, "สถานะ: -", "STATUS: -")
+	addQ(0, 0, "คัดลอกชื่อ", "Copy name", function()
+		copyToast(LocalPlayer.Name, "คัดลอกชื่อแล้ว", "Name copied")
+	end)
+	addQ(1, 0, "ลิงก์โปรไฟล์", "Profile link", function()
+		copyToast("https://www.roblox.com/users/" .. LocalPlayer.UserId .. "/profile", "คัดลอกลิงก์โปรไฟล์แล้ว", "Profile link copied")
+	end)
+	addQ(2, 0, "ลิงก์เกม", "Game link", function()
+		copyToast("https://www.roblox.com/games/" .. game.PlaceId, "คัดลอกลิงก์เกมแล้ว", "Game link copied")
+	end)
+	addQ(0, 1, "รีเซ็ตตัวละคร", "Reset char", function()
+		local ch = LocalPlayer.Character
+		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Health = 0
+			toast("รีเซ็ตตัวละครแล้ว", "Character reset")
+		else
+			toast("ไม่พบตัวละคร", "Character not found")
+		end
+	end)
+	addQ(1, 1, "สุ่มย้ายเซิร์ฟ", "Server hop", function() SRV.hop() end)
+	addQ(2, 1, "เข้าเกมใหม่", "Rejoin", function() SRV.rejoin() end)
 
 	-- ===== 5) ประสิทธิภาพ: กราฟเส้นสด =====
 	local sc = mkCard(P, 226, 5)
 	brackets(sc)
-	tr(mkLabel(sc, 12, 7, 300, 14, "", 10, WHITE, TITLE_FONT), "// ประสิทธิภาพ", "// PERFORMANCE")
+	heading(sc, "// ประสิทธิภาพ", "// PERFORMANCE")
 
 	local function makeLine(parent, x, y, w, h)
 		local area = new("Frame", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 6}, parent)
@@ -1073,20 +1299,28 @@ do
 		end
 		local bw = w / (GN - 1)
 		local cols, lines = {}, {}
+		local colored = {}
 		for i = 1, GN do
-			local c = new("Frame", {AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset((i - 1) * bw, h), Size = UDim2.fromOffset(bw + 1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, Visible = false, ZIndex = 6}, area)
+			local c = new("Frame", {AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.fromOffset((i - 1) * bw, h), Size = UDim2.fromOffset(bw + 1, 1), BackgroundColor3 = ACCENT, BorderSizePixel = 0, Visible = false, ZIndex = 6}, area)
 			new("UIGradient", {Rotation = 90, Transparency = NumberSequence.new({
 				NumberSequenceKeypoint.new(0, 0.72),
 				NumberSequenceKeypoint.new(1, 1),
 			})}, c)
 			cols[i] = c
+			colored[#colored + 1] = c
 		end
 		for i = 1, GN - 1 do
-			lines[i] = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(2, 2), BackgroundColor3 = WHITE, BorderSizePixel = 0, Visible = false, ZIndex = 7}, area)
+			local ln = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(2, 2), BackgroundColor3 = ACCENT, BorderSizePixel = 0, Visible = false, ZIndex = 7}, area)
+			lines[i] = ln
+			colored[#colored + 1] = ln
 		end
 		local dot = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(6, 6), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 8}, area)
 		corner(dot, 3)
-		stroke(dot, WHITE, 0.5, 2)
+		local dotStroke = stroke(dot, ACCENT, 0.3, 2)
+		onAccent(function(c)
+			for _, f in ipairs(colored) do f.BackgroundColor3 = c end
+			dotStroke.Color = c
+		end)
 		return {cols = cols, lines = lines, dot = dot, w = w, h = h}
 	end
 	local function drawLine(g, hist, mx)
@@ -1128,24 +1362,24 @@ do
 		if last then g.dot.Position = UDim2.fromOffset(last.X, last.Y) end
 	end
 	local function panel(x, title)
-		local pw = 199
-		local pf = new("Frame", {Position = UDim2.fromOffset(x, 26), Size = UDim2.fromOffset(pw, 120), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 5}, sc)
-		corner(pf, 8)
+		local pw = 177
+		local pf = new("Frame", {Position = UDim2.fromOffset(x, 28), Size = UDim2.fromOffset(pw, 120), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 5}, sc)
+		corner(pf, 10)
 		stroke(pf, Color3.fromRGB(120, 120, 120), 0.65, 1)
-		mkLabel(pf, 8, 6, 80, 12, title, 10, GRAY, TITLE_FONT)
+		mkLabel(pf, 8, 6, 70, 12, title, 10, GRAY, TITLE_FONT)
 		local state = mkLabel(pf, 0, 6, pw - 8, 12, "-", 9, WHITE, HUD_FONT, Enum.TextXAlignment.Right)
-		local big = mkLabel(pf, 8, 18, 130, 28, "-", 22, WHITE, TITLE_FONT)
+		local big = mkLabel(pf, 8, 18, 120, 28, "-", 22, WHITE, TITLE_FONT)
 		gradText(big)
 		local info = mkLabel(pf, 8, 46, pw - 16, 12, "", 9, GRAY, HUD_FONT)
 		return {big = big, state = state, info = info, g = makeLine(pf, 6, 62, pw - 12, 52)}
 	end
 	local pFps = panel(10, "FPS")
-	local pPing = panel(219, "PING")
+	local pPing = panel(197, "PING")
 
 	local V = {}
 	local cw3 = (CW - 20 - 12) / 3
 	local function chipAt(col, row, th, en, vs)
-		return chip(sc, 10 + col * (cw3 + 6), 154 + row * 36, cw3, 30, th, en, vs)
+		return chip(sc, 10 + col * (cw3 + 6), 156 + row * 36, cw3, 30, th, en, vs)
 	end
 	V.mem = chipAt(0, 0, "หน่วยความจำ", "MEMORY")
 	V.players = chipAt(1, 0, "ผู้เล่น", "PLAYERS")
@@ -1176,86 +1410,99 @@ do
 		pn.info.Text = string.format("MIN %d   AVG %d   MAX %d", math.floor(mn + 0.5), math.floor(avg + 0.5), math.floor(mx + 0.5))
 	end
 
-	-- อัปเดตทุก 0.25 วินาที (กราฟเฉพาะตอนเปิดหน้านี้อยู่)
-	local acc, frames = 0, 0
-	onFrame(function(t, dt)
+	-- ===== 6) รายชื่อผู้เล่นในเซิร์ฟ =====
+	local pl = new("Frame", {Size = UDim2.new(1, 0, 0, 40), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = Color3.fromRGB(14, 14, 14), BackgroundTransparency = 0.25, BorderSizePixel = 0, LayoutOrder = 6, ZIndex = 4}, P)
+	corner(pl, 12)
+	stroke(pl, Color3.fromRGB(120, 120, 120), 0.6, 1)
+	new("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder}, pl)
+	new("UIPadding", {PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, pl)
+	local plHead = new("TextLabel", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Font = TITLE_FONT, TextSize = 10, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 0, ZIndex = 5}, pl)
+	local plHeadE = tr(plHead, "// ผู้เล่นในเซิร์ฟ", "// PLAYERS IN SERVER")
+	local plRows = {}
+	local function refreshPlayers()
+		for _, r in ipairs(plRows) do r:Destroy() end
+		plRows = {}
+		local list = Players:GetPlayers()
+		plHeadE.th = "// ผู้เล่นในเซิร์ฟ (" .. #list .. ")"
+		plHeadE.en = "// PLAYERS IN SERVER (" .. #list .. ")"
+		applyOne(plHeadE)
+		for i = 1, math.min(#list, 12) do
+			local p = list[i]
+			local r = new("Frame", {Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = Color3.fromRGB(8, 8, 8), BackgroundTransparency = 0.2, BorderSizePixel = 0, LayoutOrder = i, ZIndex = 5}, pl)
+			corner(r, 8)
+			local hs = new("ImageLabel", {Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = Color3.fromRGB(30, 30, 30), Image = "rbxthumb://type=AvatarHeadShot&id=" .. p.UserId .. "&w=48&h=48", ZIndex = 6}, r)
+			corner(hs, 11)
+			mkLabel(r, 32, 2, 200, 14, p.DisplayName .. ((p == LocalPlayer) and "  (YOU)" or ""), 11)
+			mkLabel(r, 32, 15, 200, 12, "@" .. p.Name, 9, GRAY, HUD_FONT)
+			local cb = new("TextButton", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), Size = UDim2.fromOffset(62, 20), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Font = FONT, TextSize = 10, TextColor3 = WHITE, AutoButtonColor = false, ZIndex = 6}, r)
+			corner(cb, 6)
+			stroke(cb, Color3.fromRGB(110, 110, 110), 0.4, 1)
+			fxFlat(cb, Color3.fromRGB(58, 58, 58))
+			tr(cb, "คัดลอก ID", "COPY ID")
+			cb.MouseButton1Click:Connect(function()
+				sfx("click", nil, 1.6)
+				copyToast(tostring(p.UserId), "คัดลอก ID ผู้เล่นแล้ว", "Player ID copied")
+			end)
+			plRows[#plRows + 1] = r
+		end
+	end
+	refreshPlayers()
+	local pendingRefresh = false
+	local function queueRefresh()
+		if pendingRefresh then return end
+		pendingRefresh = true
+		task.delay(0.5, function()
+			pendingRefresh = false
+			if gui.Parent then refreshPlayers() end
+		end)
+	end
+	Players.PlayerAdded:Connect(queueRefresh)
+	Players.PlayerRemoving:Connect(queueRefresh)
+
+	-- ===== อัปเดตสด =====
+	onFrame(function(t)
 		if opened and currentTab == "home" then
 			live.BackgroundTransparency = (math.sin(t * 4) + 1) / 2 * 0.8
 		end
-		acc = acc + dt
-		frames = frames + 1
-		if acc < 0.25 then return end
-		local fps = frames / acc
-		acc, frames = 0, 0
-		if not opened then return end
-
-		local ping, mem = 0, 0
-		pcall(function() ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
-		pcall(function() mem = Stats:GetTotalMemoryUsageMb() end)
+	end)
+	onSample(function(s, t)
+		if currentTab ~= "home" then return end
+		clockV.Text = os.date("%H:%M:%S")
 		local ch = LocalPlayer.Character
 		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
 		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-
-		-- มินิสถานะในแถบข้าง
-		MiniV.fps.Text = tostring(math.floor(fps + 0.5))
-		MiniV.ping.Text = math.floor(ping) .. "ms"
-		MiniV.hp.Text = hum and tostring(math.floor(hum.Health + 0.5)) or "-"
-
-		if currentTab ~= "home" then return end
-
-		-- เลือด
 		if hum then
-			local mx = math.max(hum.MaxHealth, 1)
-			local ratio = math.clamp(hum.Health / mx, 0, 1)
-			local lit = math.floor(ratio * SEG + 0.5)
-			local blink = ratio < 0.3 and math.floor(t * 4) % 2 == 0
-			for i = 1, SEG do
-				segs[i].BackgroundTransparency = (i <= lit) and (blink and 0.6 or 0) or 0.82
-			end
-			hBig.Text = math.floor(hum.Health + 0.5) .. " / " .. math.floor(mx + 0.5)
-			if ratio <= 0 then
-				hStateE.th, hStateE.en = "สถานะ: ตาย", "STATUS: DEAD"
-			elseif ratio < 0.3 then
-				hStateE.th, hStateE.en = "สถานะ: เลือดวิกฤต", "STATUS: CRITICAL"
-			else
-				hStateE.th, hStateE.en = "สถานะ: ปกติ", "STATUS: NORMAL"
-			end
-			applyOne(hStateE)
 			V.speed.Text = tostring(math.floor(hum.WalkSpeed * 10 + 0.5) / 10)
 			local jp = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
 			V.jump.Text = tostring(math.floor(jp * 10 + 0.5) / 10)
-		else
-			hBig.Text = "- / -"
 		end
 		if hrp then
 			local p = hrp.Position
 			V.pos.Text = string.format("%d, %d, %d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z))
 		end
 
-		-- กราฟ FPS / ปิง
-		push(fpsHist, fps)
-		push(pingHist, ping)
-		local fWord = (fps >= 55 and {"ลื่นไหล", "SMOOTH"}) or (fps >= 30 and {"พอใช้", "OK"}) or {"กระตุก", "LOW"}
-		local pWord = (ping <= 80 and {"ดีมาก", "GOOD"}) or (ping <= 160 and {"พอใช้", "OK"}) or {"สูง", "HIGH"}
-		updPanel(pFps, fpsHist, 60, tostring(math.floor(fps + 0.5)), fWord[1], fWord[2])
-		updPanel(pPing, pingHist, 100, math.floor(ping) .. " ms", pWord[1], pWord[2])
+		push(fpsHist, s.fps)
+		push(pingHist, s.ping)
+		local fWord = (s.fps >= 55 and {"ลื่นไหล", "SMOOTH"}) or (s.fps >= 30 and {"พอใช้", "OK"}) or {"กระตุก", "LOW"}
+		local pWord = (s.ping <= 80 and {"ดีมาก", "GOOD"}) or (s.ping <= 160 and {"พอใช้", "OK"}) or {"สูง", "HIGH"}
+		updPanel(pFps, fpsHist, 60, tostring(math.floor(s.fps + 0.5)), fWord[1], fWord[2])
+		updPanel(pPing, pingHist, 100, math.floor(s.ping) .. " ms", pWord[1], pWord[2])
 
-		V.mem.Text = math.floor(mem) .. " MB"
+		V.mem.Text = math.floor(s.mem) .. " MB"
 		V.players.Text = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
 		plV.Text = #Players:GetPlayers() .. " / " .. Players.MaxPlayers
-		local s = math.floor(t)
-		V.time.Text = string.format("%02d:%02d:%02d", s // 3600, (s % 3600) // 60, s % 60)
+		local sec = math.floor(t)
+		V.time.Text = string.format("%02d:%02d:%02d", sec // 3600, (sec % 3600) // 60, sec % 60)
 	end)
 end
 
--- ===================== หมวดตั้งค่า + ค้นหาเซิร์ฟ 0-1 คน =====================
+-- ===================== หมวดตั้งค่า =====================
 do
 	local P = Pages.settings
-	local HttpService = game:GetService("HttpService")
 	local TeleportService = game:GetService("TeleportService")
 	local Lighting = game:GetService("Lighting")
 	local FONT = Enum.Font.GothamBold
-	local CW = 428
+	local CW = 384
 	local MAXP = 1 -- ถือว่า "ว่าง" เมื่อมีผู้เล่นไม่เกินกี่คน
 	local order = 0
 	local function nextOrder()
@@ -1265,28 +1512,32 @@ do
 	local function pct(v) return math.floor(v * 100 + 0.5) .. "%" end
 
 	local function section(th, en)
-		local l = new("TextLabel", {Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Font = TITLE_FONT, TextSize = 11, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = nextOrder(), ZIndex = 5}, P)
-		tr(l, th, en)
+		local h = new("Frame", {Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, LayoutOrder = nextOrder(), ZIndex = 5}, P)
+		local bar = new("Frame", {Position = UDim2.fromOffset(2, 4), Size = UDim2.fromOffset(3, 12), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 5}, h)
+		corner(bar, 2)
+		onAccent(function(c) bar.BackgroundColor3 = c end)
+		tr(mkLabel(h, 12, 3, 300, 14, "", 11, WHITE, TITLE_FONT), th, en)
 	end
 	local function row(h) return mkCard(P, h, nextOrder()) end
 
 	-- สวิตช์เปิด/ปิด
 	local function toggle(th, en, init, cb)
-		local r = row(36)
+		local r = row(38)
 		local lb = new("TextLabel", {Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -80, 1, 0), BackgroundTransparency = 1, Font = FONT, TextSize = 13, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5}, r)
 		tr(lb, th, en)
-		local track = new("TextButton", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(40, 20), BackgroundColor3 = Color3.fromRGB(50, 50, 50), Text = "", AutoButtonColor = false, ZIndex = 5}, r)
-		corner(track, 10)
+		local track = new("TextButton", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(42, 22), BackgroundColor3 = Color3.fromRGB(50, 50, 50), Text = "", AutoButtonColor = false, ZIndex = 5}, r)
+		corner(track, 11)
 		stroke(track, Color3.fromRGB(120, 120, 120), 0.4, 1)
-		local knob = new("Frame", {AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 3, 0.5, 0), Size = UDim2.fromOffset(14, 14), BackgroundColor3 = Color3.fromRGB(170, 170, 170), BorderSizePixel = 0, ZIndex = 6}, track)
-		corner(knob, 7)
+		local knob = new("Frame", {AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 3, 0.5, 0), Size = UDim2.fromOffset(16, 16), BackgroundColor3 = Color3.fromRGB(170, 170, 170), BorderSizePixel = 0, ZIndex = 6}, track)
+		corner(knob, 8)
 		local state = init
 		local function render(anim)
 			local d = anim and 0.15 or 0
-			tw(track, d, {BackgroundColor3 = state and Color3.fromRGB(235, 235, 235) or Color3.fromRGB(50, 50, 50)})
-			tw(knob, d, {Position = state and UDim2.new(1, -17, 0.5, 0) or UDim2.new(0, 3, 0.5, 0), BackgroundColor3 = state and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(170, 170, 170)})
+			tw(track, d, {BackgroundColor3 = state and ACCENT or Color3.fromRGB(50, 50, 50)})
+			tw(knob, d, {Position = state and UDim2.new(1, -19, 0.5, 0) or UDim2.new(0, 3, 0.5, 0), BackgroundColor3 = state and onAccentText(ACCENT) or Color3.fromRGB(170, 170, 170)})
 		end
 		render(false)
+		onAccent(function() render(false) end)
 		track.MouseButton1Click:Connect(function()
 			state = not state
 			render(true)
@@ -1297,13 +1548,14 @@ do
 
 	-- สไลเดอร์
 	local function slider(th, en, minV, maxV, init, fmt, cb)
-		local r = row(46)
-		tr(mkLabel(r, 12, 5, 300, 16, "", 13), th, en)
-		local val = mkLabel(r, 0, 5, 416, 16, fmt(init), 12, GRAY, HUD_FONT, Enum.TextXAlignment.Right)
-		local track = new("TextButton", {Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 6), BackgroundColor3 = Color3.fromRGB(50, 50, 50), Text = "", AutoButtonColor = false, ZIndex = 5}, r)
+		local r = row(48)
+		tr(mkLabel(r, 12, 5, 260, 16, "", 13), th, en)
+		local val = mkLabel(r, 0, 5, 372, 16, fmt(init), 12, GRAY, HUD_FONT, Enum.TextXAlignment.Right)
+		local track = new("TextButton", {Position = UDim2.new(0, 12, 0, 31), Size = UDim2.new(1, -24, 0, 6), BackgroundColor3 = Color3.fromRGB(50, 50, 50), Text = "", AutoButtonColor = false, ZIndex = 5}, r)
 		corner(track, 3)
-		local fill = new("Frame", {Size = UDim2.fromScale((init - minV) / (maxV - minV), 1), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 6}, track)
+		local fill = new("Frame", {Size = UDim2.fromScale(math.clamp((init - minV) / (maxV - minV), 0, 1), 1), BackgroundColor3 = ACCENT, BorderSizePixel = 0, ZIndex = 6}, track)
 		corner(fill, 3)
+		onAccent(function(c) fill.BackgroundColor3 = c end)
 		local knob = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(14, 14), BackgroundColor3 = WHITE, BorderSizePixel = 0, ZIndex = 7}, fill)
 		corner(knob, 7)
 		local function setFrac(f)
@@ -1335,13 +1587,13 @@ do
 
 	-- แถวปุ่ม (หลายปุ่มเรียงกัน)
 	local function buttons(items)
-		local r = row(34)
+		local r = row(36)
 		local n = #items
 		local gap = 6
 		local w = (CW - 16 - gap * (n - 1)) / n
 		for i, it in ipairs(items) do
-			local b = new("TextButton", {Position = UDim2.fromOffset(8 + (i - 1) * (w + gap), 4), Size = UDim2.fromOffset(w, 26), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Font = FONT, TextSize = 12, TextColor3 = WHITE, AutoButtonColor = false, ZIndex = 5}, r)
-			corner(b, 6)
+			local b = new("TextButton", {Position = UDim2.fromOffset(8 + (i - 1) * (w + gap), 5), Size = UDim2.fromOffset(w, 26), BackgroundColor3 = Color3.fromRGB(32, 32, 32), BackgroundTransparency = 0.15, Font = FONT, TextSize = 11, TextColor3 = WHITE, AutoButtonColor = false, ZIndex = 5}, r)
+			corner(b, 8)
 			stroke(b, Color3.fromRGB(110, 110, 110), 0.4, 1)
 			fxFlat(b, Color3.fromRGB(58, 58, 58))
 			tr(b, it[1], it[2])
@@ -1355,17 +1607,16 @@ do
 
 	-- ===== เซิร์ฟเวอร์ =====
 	section("// เซิร์ฟเวอร์", "// SERVER")
-	local search, hop, rejoin, setStatus
 	buttons({
-		{"ค้นหาเซิร์ฟ 0-1 คน", "Find 0-1 player", function() search() end},
-		{"สุ่มย้ายเซิร์ฟ", "Server hop", function() hop() end},
-		{"เข้าเกมใหม่", "Rejoin", function() rejoin() end},
+		{"หาเซิร์ฟ 0-1 คน", "Find 0-1 player", function() SRV.search() end},
+		{"สุ่มย้ายเซิร์ฟ", "Server hop", function() SRV.hop() end},
+		{"เข้าเกมใหม่", "Rejoin", function() SRV.rejoin() end},
 	})
-	local statusRow = row(26)
-	local statusLbl = mkLabel(statusRow, 10, 0, 408, 26, "", 11, GRAY, HUD_FONT)
+	local statusRow = row(28)
+	local statusLbl = mkLabel(statusRow, 12, 0, 360, 28, "", 11, GRAY, HUD_FONT)
 	statusLbl.TextYAlignment = Enum.TextYAlignment.Center
 	local statusE = tr(statusLbl, "พร้อมค้นหาเซิร์ฟเวอร์", "Ready to search")
-	setStatus = function(th, en)
+	local function setStatus(th, en)
 		statusE.th, statusE.en = th, en
 		applyOne(statusE)
 	end
@@ -1423,12 +1674,16 @@ do
 		end
 	end
 	local function addResult(s, i)
-		local r = mkCard(results, 30, i)
-		local txt = string.format("%d/%d PLAYERS   •   PING %s   •   FPS %s", s.playing or 0, s.maxPlayers or 0, s.ping and (s.ping .. " ms") or "-", s.fps and tostring(math.floor(s.fps)) or "-")
-		local l = mkLabel(r, 10, 0, 300, 30, txt, 11, WHITE, HUD_FONT)
+		local r = mkCard(results, 32, i)
+		local txt = string.format("%d/%d PLAYERS  •  PING %s  •  FPS %s", s.playing or 0, s.maxPlayers or 0, s.ping and (s.ping .. " ms") or "-", s.fps and tostring(math.floor(s.fps)) or "-")
+		local l = mkLabel(r, 12, 0, 270, 32, txt, 11, WHITE, HUD_FONT)
 		l.TextYAlignment = Enum.TextYAlignment.Center
-		local jb = new("TextButton", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(70, 22), BackgroundColor3 = Color3.fromRGB(235, 235, 235), Font = FONT, TextSize = 12, TextColor3 = Color3.fromRGB(10, 10, 10), AutoButtonColor = false, ZIndex = 6}, r)
-		corner(jb, 6)
+		local jb = new("TextButton", {AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(66, 22), BackgroundColor3 = ACCENT, Font = FONT, TextSize = 12, TextColor3 = onAccentText(ACCENT), AutoButtonColor = false, ZIndex = 6}, r)
+		corner(jb, 8)
+		onAccent(function(c)
+			jb.BackgroundColor3 = c
+			jb.TextColor3 = onAccentText(c)
+		end)
 		tr(jb, "เข้าร่วม", "Join")
 		jb.MouseButton1Click:Connect(function()
 			sfx("click", nil, 1.6)
@@ -1437,7 +1692,7 @@ do
 	end
 
 	local busy = false
-	search = function()
+	SRV.search = function()
 		if busy then return end
 		busy = true
 		clearResults()
@@ -1471,7 +1726,7 @@ do
 			busy = false
 		end)
 	end
-	hop = function()
+	SRV.hop = function()
 		if busy then return end
 		busy = true
 		setStatus("กำลังหาเซิร์ฟเวอร์ให้ย้าย...", "Looking for a server...")
@@ -1484,25 +1739,71 @@ do
 			busy = false
 			if #pool == 0 then
 				setStatus("ไม่พบเซิร์ฟเวอร์ให้ย้าย", "No server to hop to")
+				toast("ไม่พบเซิร์ฟเวอร์ให้ย้าย", "No server to hop to")
 				return
 			end
 			joinServer(pool[math.random(1, #pool)].id)
 		end)
 	end
-	rejoin = function()
+	SRV.rejoin = function()
 		toast("กำลังเข้าเกมใหม่...", "Rejoining...")
 		pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
 	end
 
-	-- ===== ทั่วไป =====
-	section("// ทั่วไป", "// GENERAL")
-	toggle("เสียง", "Sound", SOUND_ON, function(v) SOUND_ON = v end)
-	slider("ระดับเสียง", "Volume", 0, 1, MASTER_VOL, pct, function(v) MASTER_VOL = v end)
-	toggle("เอฟเฟค (สายฟ้า/ประกาย)", "Effects (lightning/sparks)", EFFECTS_ON, function(v) EFFECTS_ON = v end)
-	slider("ความมืดพื้นหลัง", "Background dim", 0, 0.8, BG_DIM, pct, function(v) Dim.BackgroundTransparency = 1 - v end)
-	slider("ขนาด GUI", "GUI size", 0.7, 1.4, 1, pct, function(v)
+	-- ===== รูปลักษณ์ =====
+	section("// รูปลักษณ์", "// APPEARANCE")
+	do
+		local r = row(60)
+		tr(mkLabel(r, 12, 5, 300, 16, "", 13), "ธีมสี", "Theme color")
+		local rings = {}
+		for i, th in ipairs(THEMES) do
+			local b = new("TextButton", {Position = UDim2.fromOffset(12 + (i - 1) * 42, 26), Size = UDim2.fromOffset(30, 30), BackgroundColor3 = th[3], Text = "", AutoButtonColor = false, ZIndex = 5}, r)
+			corner(b, 15)
+			rings[i] = stroke(b, WHITE, (i == themeIdx) and 0 or 1, 2)
+			b.MouseButton1Click:Connect(function()
+				setAccent(i)
+				for j, st in ipairs(rings) do st.Transparency = (j == i) and 0 or 1 end
+				sfx("click", nil, 1.6)
+				saveSettings()
+			end)
+		end
+	end
+	slider("ความมืดพื้นหลัง", "Background dim", 0, 0.8, BG_DIM, pct, function(v)
+		BG_DIM = v
+		Dim.BackgroundTransparency = 1 - v
+		saveSettings()
+	end)
+	slider("ขนาด GUI", "GUI size", 0.7, 1.4, userScale, pct, function(v)
 		userScale = v
 		if opened then scale.Scale = target() end
+		saveSettings()
+	end)
+	slider("ความโปร่งใสหน้าต่าง", "Window opacity", 0.5, 1, uiOpacity, pct, function(v)
+		uiOpacity = v
+		if opened then Main.GroupTransparency = 1 - v end
+		saveSettings()
+	end)
+
+	-- ===== เสียงและเอฟเฟค =====
+	section("// เสียงและเอฟเฟค", "// SOUND & EFFECTS")
+	toggle("เสียง", "Sound", SOUND_ON, function(v)
+		SOUND_ON = v
+		saveSettings()
+	end)
+	slider("ระดับเสียง", "Volume", 0, 1, MASTER_VOL, pct, function(v)
+		MASTER_VOL = v
+		saveSettings()
+	end)
+	toggle("เอฟเฟค (สายฟ้า/ประกาย)", "Effects (lightning/sparks)", EFFECTS_ON, function(v)
+		EFFECTS_ON = v
+		saveSettings()
+	end)
+
+	-- ===== เครื่องมือในเกม =====
+	section("// เครื่องมือในเกม", "// GAME TOOLS")
+	local camNow = workspace.CurrentCamera
+	slider("มุมมองกล้อง (FOV)", "Camera FOV", 50, 120, camNow and camNow.FieldOfView or 70, function(v) return math.floor(v + 0.5) .. " deg" end, function(v)
+		pcall(function() workspace.CurrentCamera.FieldOfView = v end)
 	end)
 
 	local afkConn
@@ -1518,6 +1819,27 @@ do
 		elseif afkConn then
 			afkConn:Disconnect()
 			afkConn = nil
+		end
+	end)
+
+	local rejoinConn
+	toggle("เข้าเกมใหม่อัตโนมัติเมื่อหลุด", "Auto rejoin on disconnect", false, function(v)
+		if v then
+			task.spawn(function()
+				pcall(function()
+					local CoreGui = game:GetService("CoreGui")
+					local overlay = CoreGui:WaitForChild("RobloxPromptGui", 5):WaitForChild("promptOverlay", 5)
+					rejoinConn = overlay.ChildAdded:Connect(function(c)
+						if c.Name == "ErrorPrompt" then
+							task.wait(1.5)
+							pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
+						end
+					end)
+				end)
+			end)
+		elseif rejoinConn then
+			rejoinConn:Disconnect()
+			rejoinConn = nil
 		end
 	end)
 
@@ -1554,8 +1876,34 @@ do
 		end},
 	})
 
-	local hint = row(26)
-	local hl = mkLabel(hint, 10, 0, 408, 26, "", 11, GRAY, HUD_FONT)
+	-- ===== ระบบ =====
+	section("// ระบบ", "// SYSTEM")
+	toggle("บันทึกการตั้งค่าอัตโนมัติ", "Auto-save settings", AUTOSAVE, function(v)
+		AUTOSAVE = v
+		saveSettings(true)
+	end)
+	local function debugInfo()
+		local ex = "?"
+		pcall(function()
+			if identifyexecutor then ex = identifyexecutor() end
+		end)
+		return string.format("%s | exec=%s | place=%d | job=%s | players=%d | fps=%d | ping=%d | view=%dx%d | lang=%s", VERSION, tostring(ex), game.PlaceId, game.JobId, #Players:GetPlayers(), math.floor(S.fps), math.floor(S.ping), math.floor(vp.X), math.floor(vp.Y), lang)
+	end
+	buttons({
+		{"คัดลอกข้อมูลดีบัก", "Copy debug info", function()
+			copyToast(debugInfo(), "คัดลอกข้อมูลดีบักแล้ว", "Debug info copied")
+		end},
+		{"ล้างค่าที่บันทึก", "Clear saved settings", function()
+			pcall(function()
+				if isfile and delfile and isfile(SAVE_FILE) then delfile(SAVE_FILE) end
+			end)
+			toast("ล้างค่าที่บันทึกแล้ว (มีผลตอนรันใหม่)", "Saved settings cleared (applies next run)")
+		end},
+	})
+
+	local hint = row(46)
+	local hl = mkLabel(hint, 12, 4, 360, 38, "", 11, GRAY, HUD_FONT)
+	hl.TextWrapped = true
 	hl.TextYAlignment = Enum.TextYAlignment.Center
-	tr(hl, "คีย์ลัด: กด RightShift เพื่อเปิด/ปิด GUI", "Hotkey: press RightShift to toggle the GUI")
+	tr(hl, "คีย์ลัด: กด RightShift เพื่อเปิด/ปิด GUI  •  " .. VERSION, "Hotkey: press RightShift to toggle the GUI  •  " .. VERSION)
 end
